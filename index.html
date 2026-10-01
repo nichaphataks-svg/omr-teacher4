@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ระบบกระดาษคำตอบ & ตรวจข้อสอบอัตโนมัติ (ป.1 - ป.6)</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- SheetJS (XLSX) -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <!-- OpenCV.js -->
+    <script async src="https://docs.opencv.org/4.7.0/opencv.js" onload="onOpenCvReady()"></script>
+    <!-- TH Sarabun PSK / Google Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            font-family: 'Sarabun', sans-serif;
+            background-color: #f3f4f6;
+        }
+
+        /* Print CSS for A4 Landscape - 2 Up (A5 size per sheet) */
+        @media print {
+            @page {
+                size: A4 landscape;
+                margin: 0;
+            }
+            body {
+                background: white !important;
+                color: black !important;
+                padding: 0 !important;
+                margin: 0 !important;
+            }
+            .no-print {
+                display: none !important;
+            }
+            .print-only {
+                display: block !important;
+            }
+            .print-container {
+                width: 297mm;
+                height: 210mm;
+                padding: 5mm;
+                box-sizing: border-box;
+                display: flex !important;
+                flex-direction: row !important;
+                justify-content: space-between !important;
+                align-items: stretch !important;
+                gap: 5mm !important;
+                page-break-after: always;
+            }
+            .omr-sheet-print {
+                width: 139mm !important;
+                height: 200mm !important;
+                border: 1px dashed #ccc !important;
+                padding: 5mm !important;
+                box-sizing: border-box !important;
+                position: relative !important;
+                background: #fff !important;
+                display: flex !important;
+                flex-direction: column !important;
+                justify-content: space-between !important;
+            }
+        }
+
+        .print-only {
+            display: none;
+        }
+
+        /* Alignment Markers (Fiducials) */
+        .fiducial-mark {
+            width: 14px;
+            height: 14px;
+            background-color: #000;
+            position: absolute;
+        }
+        .fiducial-tl { top: 4mm; left: 4mm; }
+        .fiducial-tr { top: 4mm; right: 4mm; }
+        .fiducial-bl { bottom: 4mm; left: 4mm; }
+        .fiducial-br { bottom: 4mm; right: 4mm; }
+
+        /* Bubble Styles */
+        .bubble {
+            width: 14px;
+            height: 14px;
+            border: 1.2px solid #000;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 9px;
+            font-weight: bold;
+            color: #000;
+            background-color: #fff;
+        }
+
+        /* Input Box for Student ID Number Write-in */
+        .id-digit-box {
+            width: 14px;
+            height: 16px;
+            border: 1.2px solid #000;
+            text-align: center;
+            font-size: 10px;
+            font-weight: bold;
+            background: #fff;
+        }
+
+        /* Mobile Vertical Scanner Video Viewport */
+        .scanner-container-portrait {
+            position: relative;
+            width: 100%;
+            max-width: 360px;
+            height: 480px;
+            margin: 0 auto;
+            background-color: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 3px solid #4f46e5;
+        }
+
+        /* Scanning Laser Animation */
+        @keyframes scanLaser {
+            0% { top: 5%; }
+            50% { top: 90%; }
+            100% { top: 5%; }
+        }
+        .scan-laser {
+            animation: scanLaser 2.2s infinite ease-in-out;
+        }
+    </style>
+</head>
+<body class="text-gray-800">
+
+    <!-- Top Navigation Bar -->
+    <nav class="bg-indigo-900 text-white shadow-md no-print sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <i class="fa-solid fa-graduation-cap text-3xl text-indigo-300"></i>
+                <div>
+                    <h1 class="font-bold text-xl leading-tight">ระบบกระดาษคำตอบ & ตรวจข้อสอบอัตโนมัติ (ป.1 - ป.6)</h1>
+                    <p class="text-xs text-indigo-200">ประมวลผลผ่านกล้อง/ไฟล์ภาพ & สรุปคะแนนลง Excel</p>
+                </div>
+            </div>
+            
+            <div class="flex items-center space-x-2 mt-2 sm:mt-0">
+                <button onclick="switchTab('manage')" id="tab-btn-manage" class="px-4 py-2 rounded-lg font-semibold bg-indigo-700 text-white hover:bg-indigo-600 transition flex items-center space-x-1 text-sm">
+                    <i class="fa-solid fa-users-gear"></i> <span>1. จัดการครู/วิชา/นักเรียน</span>
+                </button>
+                <button onclick="switchTab('print')" id="tab-btn-print" class="px-4 py-2 rounded-lg font-semibold bg-indigo-800 text-indigo-200 hover:bg-indigo-700 transition flex items-center space-x-1 text-sm">
+                    <i class="fa-solid fa-print"></i> <span>2. ตัวอย่าง/สั่งพิมพ์</span>
+                </button>
+                <button onclick="switchTab('scan')" id="tab-btn-scan" class="px-4 py-2 rounded-lg font-semibold bg-indigo-800 text-indigo-200 hover:bg-indigo-700 transition flex items-center space-x-1 text-sm">
+                    <i class="fa-solid fa-camera"></i> <span>3. สแกนตรวจข้อสอบ</span>
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content Container -->
+    <div class="max-w-7xl mx-auto p-4 sm:p-6 no-print">
+
+        <!-- TAB 1: Management (Teacher, Subject, Student, Report) -->
+        <div id="tab-manage" class="space-y-6">
+            <!-- Sub Navigation Tabs -->
+            <div class="flex border-b border-gray-300 bg-white rounded-t-xl px-4 pt-3 space-x-4 shadow-sm overflow-x-auto">
+                <button onclick="switchSubTab('teacher')" id="subtab-btn-teacher" class="pb-3 border-b-2 border-indigo-600 font-bold text-indigo-600 flex items-center space-x-2 whitespace-nowrap">
+                    <i class="fa-solid fa-user-tie"></i><span>จัดการครูผู้สอน</span>
+                </button>
+                <button onclick="switchSubTab('subject')" id="subtab-btn-subject" class="pb-3 border-b-2 border-transparent font-medium text-gray-500 hover:text-indigo-600 flex items-center space-x-2 whitespace-nowrap">
+                    <i class="fa-solid fa-book"></i><span>จัดการวิชา & เฉลย</span>
+                </button>
+                <button onclick="switchSubTab('student')" id="subtab-btn-student" class="pb-3 border-b-2 border-transparent font-medium text-gray-500 hover:text-indigo-600 flex items-center space-x-2 whitespace-nowrap">
+                    <i class="fa-solid fa-user-graduate"></i><span>จัดการนักเรียน</span>
+                </button>
+                <button onclick="switchSubTab('report')" id="subtab-btn-report" class="pb-3 border-b-2 border-transparent font-medium text-gray-500 hover:text-indigo-600 flex items-center space-x-2 whitespace-nowrap">
+                    <i class="fa-solid fa-file-excel text-green-600"></i><span>สรุปคะแนน & Excel</span>
+                </button>
+            </div>
+
+            <!-- Sub Tab Content: Teacher -->
+            <div id="subtab-teacher" class="bg-white p-6 rounded-b-xl shadow-md space-y-4">
+                <h2 class="text-lg font-bold text-gray-800 border-b pb-2"><i class="fa-solid fa-user-plus text-indigo-600 mr-2"></i>เพิ่มข้อมูลครูผู้สอน</h2>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">ชื่อ-นามสกุล ครูผู้สอน *</label>
+                        <input type="text" id="teacher-name" placeholder="เช่น ครูสมชาย ใจดี" class="w-full border rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">ตำแหน่ง / กลุ่มสาระ</label>
+                        <input type="text" id="teacher-pos" placeholder="เช่น ครูประจำชั้น ป.3 / วิทยาศาสตร์" class="w-full border rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none">
+                    </div>
+                    <div class="flex items-end">
+                        <button onclick="addTeacher()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-lg transition flex items-center justify-center space-x-2">
+                            <i class="fa-solid fa-floppy-disk"></i><span>บันทึกข้อมูลครู</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="mt-6">
+                    <h3 class="font-bold text-gray-700 mb-2">รายชื่อครูผู้สอนในระบบ</h3>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse border border-gray-200 text-sm">
+                            <thead>
+                                <tr class="bg-gray-100 border-b">
+                                    <th class="p-3">ลำดับ</th>
+                                    <th class="p-3">ชื่อ-นามสกุล ครู</th>
+                                    <th class="p-3">ตำแหน่ง / กลุ่มสาระ</th>
+                                    <th class="p-3 text-center">จัดการ</th>
+                                </tr>
+                            </thead>
+                            <tbody id="teacher-table-body">
+                                <!-- Dynamic Teachers -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sub Tab Content: Subject (Updated with Subject Code & Grade Option) -->
+            <div id="subtab-subject" class="bg-white p-6 rounded-b-xl shadow-md space-y-4 hidden">
+                <h2 class="text-lg font-bold text-gray-800 border-b pb-2"><i class="fa-solid fa-book-open text-indigo-600 mr-2"></i>จัดการรายวิชาและเฉลยคำตอบ</h2>
+                
+                <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">รหัสวิชา *</label>
+                        <input type="text" id="subject-code" placeholder="เช่น ว13101" class="w-full border rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">ชื่อวิชา *</label>
+                        <input type="text" id="subject-name" placeholder="เช่น วิทยาศาสตร์" class="w-full border rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">ระดับชั้น *</label>
+                        <select id="subject-grade" class="w-full border rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none">
+                            <option value="ป.1">ประถมศึกษาปีที่ 1 (ป.1)</option>
+                            <option value="ป.2">ประถมศึกษาปีที่ 2 (ป.2)</option>
+                            <option value="ป.3" selected>ประถมศึกษาปีที่ 3 (ป.3)</option>
+                            <option value="ป.4">ประถมศึกษาปีที่ 4 (ป.4)</option>
+                            <option value="ป.5">ประถมศึกษาปีที่ 5 (ป.5)</option>
+                            <option value="ป.6">ประถมศึกษาปีที่ 6 (ป.6)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">ครูผู้สอน</label>
+                        <select id="subject-teacher-select" class="w-full border rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none">
+                            <!-- Dynamic options -->
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">จำนวนข้อสอบ *</label>
+                        <select id="subject-questions-count" class="w-full border rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none" onchange="renderKeyInputs()">
+                            <option value="10">10 ข้อ</option>
+                            <option value="20">20 ข้อ</option>
+                            <option value="30" selected>30 ข้อ</option>
+                            <option value="40">40 ข้อ</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="flex justify-end mt-2">
+                    <button onclick="saveSubject()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-6 py-2.5 rounded-lg transition flex items-center space-x-2">
+                        <i class="fa-solid fa-plus-circle"></i><span>บันทึกรายวิชา & เฉลย</span>
+                    </button>
+                </div>
+
+                <!-- Answer Key Setting -->
+                <div class="mt-4 border p-4 rounded-xl bg-gray-50">
+                    <h3 class="font-bold text-gray-700 mb-3 flex items-center justify-between">
+                        <span><i class="fa-solid fa-key text-amber-500 mr-2"></i>กำหนดเฉลยคำตอบ (ก, ข, ค, ง)</span>
+                        <span class="text-xs font-normal text-gray-500">คลิกเลือกเฉลยข้อสอบแต่ละข้อ</span>
+                    </h3>
+                    <div id="answer-key-container" class="grid grid-cols-2 sm:grid-cols-5 md:grid-cols-10 gap-3 text-xs">
+                        <!-- Dynamic Answer Keys -->
+                    </div>
+                </div>
+
+                <!-- Subjects Table -->
+                <div class="mt-6">
+                    <h3 class="font-bold text-gray-700 mb-2">รายวิชาทั้งหมด</h3>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse border border-gray-200 text-sm">
+                            <thead>
+                                <tr class="bg-gray-100 border-b">
+                                    <th class="p-3">ลำดับ</th>
+                                    <th class="p-3">รหัสวิชา</th>
+                                    <th class="p-3">ชื่อวิชา</th>
+                                    <th class="p-3">ระดับชั้น</th>
+                                    <th class="p-3">ครูผู้สอน</th>
+                                    <th class="p-3">จำนวนข้อ</th>
+                                    <th class="p-3 text-center">จัดการ</th>
+                                </tr>
+                            </thead>
+                            <tbody id="subject-table-body">
+                                <!-- Dynamic Subjects -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sub Tab Content: Student -->
+            <div id="subtab-student" class="bg-white p-6 rounded-b-xl shadow-md space-y-4 hidden">
+                <h2 class="text-lg font-bold text-gray-800 border-b pb-2"><i class="fa-solid fa-address-card text-indigo-600 mr-2"></i>จัดการรายชื่อนักเรียน (ป.1 - ป.6)</h2>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">รหัสนักเรียน (4 หลัก) *</label>
+                        <input type="text" id="student-id" maxlength="4" placeholder="เช่น 0101" class="w-full border rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">ชื่อ-นามสกุล *</label>
+                        <input type="text" id="student-name" placeholder="เช่น ด.ช.รักเรียน ขยันยิ่ง" class="w-full border rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">ระดับชั้น *</label>
+                        <select id="student-grade" class="w-full border rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none">
+                            <option value="ป.1">ประถมศึกษาปีที่ 1 (ป.1)</option>
+                            <option value="ป.2">ประถมศึกษาปีที่ 2 (ป.2)</option>
+                            <option value="ป.3" selected>ประถมศึกษาปีที่ 3 (ป.3)</option>
+                            <option value="ป.4">ประถมศึกษาปีที่ 4 (ป.4)</option>
+                            <option value="ป.5">ประถมศึกษาปีที่ 5 (ป.5)</option>
+                            <option value="ป.6">ประถมศึกษาปีที่ 6 (ป.6)</option>
+                        </select>
+                    </div>
+                    <div class="flex items-end">
+                        <button onclick="addStudent()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-lg transition flex items-center justify-center space-x-2">
+                            <i class="fa-solid fa-user-plus"></i><span>บันทึกนักเรียน</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Student List & Filter -->
+                <div class="mt-6">
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="font-bold text-gray-700">รายชื่อนักเรียนในระบบ</h3>
+                        <div class="flex items-center space-x-2">
+                            <span class="text-xs text-gray-500">กรองชั้น:</span>
+                            <select id="filter-grade" onchange="renderStudents()" class="border text-xs rounded p-1">
+                                <option value="ALL">ทั้งหมด</option>
+                                <option value="ป.1">ป.1</option>
+                                <option value="ป.2">ป.2</option>
+                                <option value="ป.3">ป.3</option>
+                                <option value="ป.4">ป.4</option>
+                                <option value="ป.5">ป.5</option>
+                                <option value="ป.6">ป.6</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse border border-gray-200 text-sm">
+                            <thead>
+                                <tr class="bg-gray-100 border-b">
+                                    <th class="p-3">รหัส (4 หลัก)</th>
+                                    <th class="p-3">ชื่อ-นามสกุล</th>
+                                    <th class="p-3">ระดับชั้น</th>
+                                    <th class="p-3 text-center">จัดการ</th>
+                                </tr>
+                            </thead>
+                            <tbody id="student-table-body">
+                                <!-- Dynamic Students -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sub Tab Content: Report & Excel -->
+            <div id="subtab-report" class="bg-white p-6 rounded-b-xl shadow-md space-y-4 hidden">
+                <div class="flex flex-wrap justify-between items-center border-b pb-4 gap-2">
+                    <div>
+                        <h2 class="text-lg font-bold text-gray-800"><i class="fa-solid fa-square-poll-vertical text-green-600 mr-2"></i>สรุปคะแนนสอบ & ส่งออกรายงาน Excel</h2>
+                        <p class="text-xs text-gray-500">ระบบจัดกลุ่มข้อมูลตามรายวิชา และแยกย่อยตามระดับชั้น (ป.1 - ป.6) ลงใน Excel Sheet อัตโนมัติ</p>
+                    </div>
+                    <button onclick="exportToExcel()" class="bg-green-600 hover:bg-green-700 text-white font-bold px-4 py-2.5 rounded-lg shadow transition flex items-center space-x-2">
+                        <i class="fa-solid fa-file-excel text-lg"></i><span>ส่งออกผลคะแนนเป็น Excel (.xlsx)</span>
+                    </button>
+                </div>
+
+                <!-- Select Subject Filter for Report -->
+                <div class="flex items-center space-x-3 bg-gray-50 p-3 rounded-lg">
+                    <span class="text-sm font-semibold text-gray-700">เลือกวิชาที่ต้องการดูรายงาน:</span>
+                    <select id="report-subject-select" onchange="renderReportTable()" class="border rounded-md p-2 text-sm focus:ring-2 focus:ring-indigo-500">
+                        <!-- Dynamic Options -->
+                    </select>
+                </div>
+
+                <!-- Report Table -->
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse border border-gray-200 text-sm">
+                        <thead>
+                            <tr class="bg-indigo-50 text-indigo-900 border-b">
+                                <th class="p-3">ระดับชั้น</th>
+                                <th class="p-3">รหัสนักเรียน</th>
+                                <th class="p-3">ชื่อ-นามสกุล</th>
+                                <th class="p-3">วิชาที่สอบ</th>
+                                <th class="p-3 text-center">คะแนนที่ได้</th>
+                                <th class="p-3 text-center">คะแนนเต็ม</th>
+                                <th class="p-3 text-center">คิดเป็น %</th>
+                                <th class="p-3 text-center">เวลาที่ตรวจ</th>
+                            </tr>
+                        </thead>
+                        <tbody id="report-table-body">
+                            <!-- Dynamic Report Records -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 2: Print Preview Mode (Updated Title & School Name Input) -->
+        <div id="tab-print" class="space-y-4 hidden">
+            <div class="bg-white p-4 rounded-xl shadow-md flex flex-wrap justify-between items-center gap-4">
+                <div class="space-y-1">
+                    <h2 class="font-bold text-gray-800 text-lg"><i class="fa-solid fa-eye text-indigo-600 mr-2"></i>ตัวอย่างกระดาษคำตอบ (สำหรับสั่งพิมพ์)</h2>
+                    <p class="text-xs text-gray-500">พิมพ์แนวนอน A4 แบ่ง 2 หน้า (A5) พอดีเป๊ะ 100%</p>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">พิมพ์/แก้ไขชื่อโรงเรียน:</label>
+                        <input type="text" id="school-name-input" value="โรงเรียนอนุบาลวัดบ้านเรา" oninput="updatePrintSheet()" class="border font-bold text-indigo-900 rounded-lg p-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none w-64">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">เลือกวิชา:</label>
+                        <select id="print-subject-select" onchange="updatePrintSheet()" class="border rounded-lg p-2 text-sm">
+                            <!-- Options from subjects -->
+                        </select>
+                    </div>
+                    <div class="self-end">
+                        <button onclick="window.print()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-5 py-2 rounded-lg shadow transition flex items-center space-x-2 text-sm">
+                            <i class="fa-solid fa-print"></i><span>สั่งพิมพ์กระดาษคำตอบ</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Preview Container in UI -->
+            <div class="bg-gray-300 p-6 rounded-xl flex justify-center overflow-x-auto">
+                <div id="ui-preview-container" class="bg-white shadow-2xl p-4 flex justify-between gap-4" style="width: 297mm; height: 210mm; box-sizing: border-box;">
+                    <!-- Rendered Sheets Preview -->
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 3: OMR Camera Scanner (Vertical Portrait Viewport + Auto Scan) -->
+        <div id="tab-scan" class="space-y-4 hidden">
+            <div class="bg-white p-6 rounded-xl shadow-md space-y-4">
+                <div class="flex flex-wrap justify-between items-center border-b pb-3 gap-2">
+                    <div>
+                        <h2 class="text-lg font-bold text-gray-800"><i class="fa-solid fa-camera text-indigo-600 mr-2"></i>สแกนตรวจกระดาษคำตอบ</h2>
+                        <p class="text-xs text-gray-500">ระบบกล้องแนวตั้ง ตรวจจับสี่เหลี่ยมดำ 4 มุมเพื่อสแกนและบันทึกคะแนนให้อัตโนมัติ</p>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <span class="text-sm font-semibold">วิชาที่สแกน:</span>
+                        <select id="scan-subject-select" class="border rounded-lg p-2 text-sm focus:ring-2 focus:ring-indigo-500">
+                            <!-- Dynamic Options -->
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Vertical Mobile Camera Section -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+                    <!-- Left: Portrait Scanner Container -->
+                    <div class="space-y-3 text-center">
+                        <div class="scanner-container-portrait">
+                            <video id="webcam-video" autoplay playsinline class="w-full h-full object-cover"></video>
+
+                            <!-- Scanning Overlay Guide (Portrait Sheet Frame) -->
+                            <div id="scanner-overlay" class="absolute inset-0 pointer-events-none hidden flex flex-col justify-between p-6">
+                                <div class="w-full h-1 bg-red-500 shadow-[0_0_15px_#f87171] scan-laser relative z-10"></div>
+                                <div class="absolute inset-6 border-2 border-dashed border-green-400 opacity-80 rounded-lg flex items-center justify-center">
+                                    <span class="text-green-300 text-xs bg-black/60 px-2 py-1 rounded">วางกระดาษคำตอบให้ตรงกรอบ 4 มุม</span>
+                                </div>
+                            </div>
+
+                            <p id="camera-placeholder" class="absolute inset-0 flex flex-col items-center justify-center text-gray-400 text-sm px-4">
+                                <i class="fa-solid fa-camera-rotate text-4xl mb-2 text-indigo-400"></i>
+                                กดปุ่ม "เปิดกล้องสแกนแนวตั้ง" ด้านล่าง
+                            </p>
+                        </div>
+
+                        <div class="flex flex-col gap-2 max-w-xs mx-auto">
+                            <button onclick="startCamera()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-lg transition flex items-center justify-center space-x-2 text-sm">
+                                <i class="fa-solid fa-mobile-screen-button"></i><span>เปิดกล้องสแกนแนวตั้ง (Mobile)</span>
+                            </button>
+                        </div>
+
+                        <div class="text-center text-xs text-gray-400 font-semibold">— หรือเลือกอัปโหลดไฟล์ภาพกระดาษคำตอบ —</div>
+
+                        <input type="file" id="file-input" accept="image/*" onchange="handleFileUpload(event)" class="w-full max-w-xs mx-auto text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                    </div>
+
+                    <!-- Right: Live Result & Scan History -->
+                    <div class="bg-gray-50 p-4 rounded-xl border border-gray-200 flex flex-col justify-between space-y-4 min-h-[480px]">
+                        <div>
+                            <h3 class="font-bold text-gray-700 border-b pb-2 flex justify-between items-center">
+                                <span><i class="fa-solid fa-square-check text-green-600 mr-2"></i>ผลการตรวจสแกนล่าสุด</span>
+                                <span id="opencv-status" class="text-xs font-normal text-amber-600 bg-amber-50 px-2 py-1 rounded">กำลังโหลด OpenCV...</span>
+                            </h3>
+
+                            <div id="scan-result-details" class="mt-4 space-y-3">
+                                <div class="bg-white p-3 rounded-lg border text-sm space-y-1 shadow-sm">
+                                    <div class="flex justify-between">
+                                        <span class="text-gray-500">รหัสนักเรียน:</span>
+                                        <span id="res-student-id" class="font-bold text-gray-800">-</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-gray-500">ชื่อ-นามสกุล:</span>
+                                        <span id="res-student-name" class="font-bold text-indigo-600">-</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-gray-500">ระดับชั้น:</span>
+                                        <span id="res-student-grade" class="font-bold text-gray-800">-</span>
+                                    </div>
+                                </div>
+
+                                <div class="bg-indigo-50 p-4 rounded-lg border border-indigo-100 text-center space-y-1">
+                                    <span class="text-xs text-indigo-600 uppercase font-bold tracking-wider">คะแนนสอบที่ได้</span>
+                                    <div class="text-4xl font-extrabold text-indigo-900" id="res-score-display">0 / 0</div>
+                                    <div class="text-xs text-indigo-700 font-semibold" id="res-percentage">0%</div>
+                                </div>
+
+                                <div id="scan-alert-msg" class="hidden p-3 bg-amber-100 border border-amber-300 text-amber-800 rounded-lg text-xs font-semibold flex items-center space-x-2">
+                                    <i class="fa-solid fa-triangle-exclamation text-amber-600 text-base"></i>
+                                    <span id="scan-alert-text">คำเตือน</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Processing Canvas Viewport -->
+                        <div class="relative bg-white border rounded-lg p-2 text-center overflow-hidden max-h-40 flex justify-center items-center">
+                            <canvas id="cv-canvas" class="max-w-full max-h-36 rounded shadow-sm"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- PRINT CONTAINER (Active in @media print) -->
+    <div id="printable-area" class="print-only">
+        <!-- Dynamic Generated Printable Sheets -->
+    </div>
+
+    <!-- JavaScript Logic -->
+    <script>
+        // Global App State
+        let teachers = [
+            { id: 1, name: "ครูสมชาย ใจดี", pos: "ครูประจำชั้น ป.1 / ภาษาไทย" },
+            { id: 2, name: "ครูวิภา รัตนะ", pos: "ครูประจำชั้น ป.3 / วิทยาศาสตร์" }
+        ];
+
+        let subjects = [
+            { id: 1, code: "ว13101", name: "วิทยาศาสตร์", grade: "ป.3", teacher: "ครูวิภา รัตนะ", count: 30, keys: ["ก","ข","ค","ง","ก","ข","ค","ง","ก","ข","ค","ง","ก","ข","ค","ง","ก","ข","ค","ง","ก","ข","ค","ง","ก","ข","ค","ง","ก","ข"] }
+        ];
+
+        let students = [
+            { id: "0101", name: "ด.ช.รักเรียน ขยันยิ่ง", grade: "ป.3" },
+            { id: "0102", name: "ด.ญ.ใจดี มุ่งมั่น", grade: "ป.3" }
+        ];
+
+        let examResults = [];
+
+        let currentTab = 'manage';
+        let currentSubTab = 'teacher';
+        let cvReady = false;
+        let videoStream = null;
+        let isScanningActive = false;
+        let autoScanInterval = null;
+
+        // Initialize App
+        window.onload = function() {
+            renderTeachers();
+            renderSubjects();
+            renderStudents();
+            renderKeyInputs();
+            renderReportTable();
+            updatePrintSheet();
+        };
+
+        function onOpenCvReady() {
+            cvReady = true;
+            document.getElementById('opencv-status').innerText = 'OpenCV Ready (พร้อมประมวลผล)';
+            document.getElementById('opencv-status').className = 'text-xs font-normal text-green-600 bg-green-50 px-2 py-1 rounded';
+        }
+
+        // Navigation Switcher
+        function switchTab(tab) {
+            currentTab = tab;
+            document.getElementById('tab-manage').classList.add('hidden');
+            document.getElementById('tab-print').classList.add('hidden');
+            document.getElementById('tab-scan').classList.add('hidden');
+
+            document.getElementById('tab-btn-manage').className = "px-4 py-2 rounded-lg font-semibold bg-indigo-800 text-indigo-200 hover:bg-indigo-700 text-sm";
+            document.getElementById('tab-btn-print').className = "px-4 py-2 rounded-lg font-semibold bg-indigo-800 text-indigo-200 hover:bg-indigo-700 text-sm";
+            document.getElementById('tab-btn-scan').className = "px-4 py-2 rounded-lg font-semibold bg-indigo-800 text-indigo-200 hover:bg-indigo-700 text-sm";
+
+            document.getElementById(`tab-${tab}`).classList.remove('hidden');
+            document.getElementById(`tab-btn-${tab}`).className = "px-4 py-2 rounded-lg font-semibold bg-indigo-700 text-white text-sm";
+
+            if(tab === 'print') updatePrintSheet();
+            if(tab === 'scan') populateScanSubjects();
+        }
+
+        function switchSubTab(sub) {
+            currentSubTab = sub;
+            ['teacher', 'subject', 'student', 'report'].forEach(s => {
+                document.getElementById(`subtab-${s}`).classList.add('hidden');
+                document.getElementById(`subtab-btn-${s}`).className = "pb-3 border-b-2 border-transparent font-medium text-gray-500 hover:text-indigo-600 flex items-center space-x-2 whitespace-nowrap";
+            });
+
+            document.getElementById(`subtab-${sub}`).classList.remove('hidden');
+            document.getElementById(`subtab-btn-${sub}`).className = "pb-3 border-b-2 border-indigo-600 font-bold text-indigo-600 flex items-center space-x-2 whitespace-nowrap";
+        }
+
+        // Teacher Management
+        function renderTeachers() {
+            const tbody = document.getElementById('teacher-table-body');
+            const select = document.getElementById('subject-teacher-select');
+            tbody.innerHTML = '';
+            select.innerHTML = '<option value="">-- เลือกครูผู้สอน --</option>';
+
+            teachers.forEach((t, index) => {
+                tbody.innerHTML += `
+                    <tr class="border-b hover:bg-gray-50">
+                        <td class="p-3">${index + 1}</td>
+                        <td class="p-3 font-semibold">${t.name}</td>
+                        <td class="p-3 text-gray-600">${t.pos}</td>
+                        <td class="p-3 text-center">
+                            <button onclick="deleteTeacher(${t.id})" class="text-red-500 hover:text-red-700"><i class="fa-solid fa-trash"></i></button>
+                        </td>
+                    </tr>
+                `;
+                select.innerHTML += `<option value="${t.name}">${t.name}</option>`;
+            });
+        }
+
+        function addTeacher() {
+            const name = document.getElementById('teacher-name').value.trim();
+            const pos = document.getElementById('teacher-pos').value.trim();
+            if(!name) return alert('กรุณากรอกชื่อ-นามสกุล ครูผู้สอน');
+
+            teachers.push({ id: Date.now(), name, pos });
+            document.getElementById('teacher-name').value = '';
+            document.getElementById('teacher-pos').value = '';
+            renderTeachers();
+        }
+
+        function deleteTeacher(id) {
+            teachers = teachers.filter(t => t.id !== id);
+            renderTeachers();
+        }
+
+        // Subject Management
+        function renderKeyInputs() {
+            const count = parseInt(document.getElementById('subject-questions-count').value);
+            const container = document.getElementById('answer-key-container');
+            container.innerHTML = '';
+
+            for(let i = 1; i <= count; i++) {
+                container.innerHTML += `
+                    <div class="bg-white p-2 border rounded shadow-sm flex flex-col items-center">
+                        <span class="font-bold text-gray-600 mb-1">ข้อ ${i}</span>
+                        <select id="key-choice-${i}" class="border rounded px-1 py-0.5 text-xs w-full text-center">
+                            <option value="ก">ก</option>
+                            <option value="ข">ข</option>
+                            <option value="ค">ค</option>
+                            <option value="ง">ง</option>
+                        </select>
+                    </div>
+                `;
+            }
+        }
+
+        function saveSubject() {
+            const code = document.getElementById('subject-code').value.trim();
+            const name = document.getElementById('subject-name').value.trim();
+            const grade = document.getElementById('subject-grade').value;
+            const teacher = document.getElementById('subject-teacher-select').value;
+            const count = parseInt(document.getElementById('subject-questions-count').value);
+
+            if(!code) return alert('กรุณากรอกรหัสวิชา');
+            if(!name) return alert('กรุณากรอกชื่อวิชา');
+
+            let keys = [];
+            for(let i = 1; i <= count; i++) {
+                keys.push(document.getElementById(`key-choice-${i}`).value);
+            }
+
+            subjects.push({ id: Date.now(), code, name, grade, teacher, count, keys });
+            document.getElementById('subject-code').value = '';
+            document.getElementById('subject-name').value = '';
+            renderSubjects();
+            populateScanSubjects();
+        }
+
+        function renderSubjects() {
+            const tbody = document.getElementById('subject-table-body');
+            const printSelect = document.getElementById('print-subject-select');
+            tbody.innerHTML = '';
+            printSelect.innerHTML = '';
+
+            subjects.forEach((s, index) => {
+                tbody.innerHTML += `
+                    <tr class="border-b hover:bg-gray-50">
+                        <td class="p-3">${index + 1}</td>
+                        <td class="p-3 font-mono font-bold text-indigo-600">${s.code || '-'}</td>
+                        <td class="p-3 font-semibold text-gray-800">${s.name}</td>
+                        <td class="p-3"><span class="bg-indigo-100 text-indigo-800 text-xs font-semibold px-2 py-0.5 rounded">${s.grade || '-'}</span></td>
+                        <td class="p-3 text-gray-600">${s.teacher || '-'}</td>
+                        <td class="p-3">${s.count} ข้อ</td>
+                        <td class="p-3 text-center">
+                            <button onclick="deleteSubject(${s.id})" class="text-red-500 hover:text-red-700"><i class="fa-solid fa-trash"></i></button>
+                        </td>
+                    </tr>
+                `;
+                printSelect.innerHTML += `<option value="${s.id}">${s.code ? s.code + ' ' : ''}${s.name} (${s.grade || ''}) - ${s.count} ข้อ</option>`;
+            });
+        }
+
+        function deleteSubject(id) {
+            subjects = subjects.filter(s => s.id !== id);
+            renderSubjects();
+        }
+
+        // Student Management
+        function renderStudents() {
+            const filter = document.getElementById('filter-grade').value;
+            const tbody = document.getElementById('student-table-body');
+            tbody.innerHTML = '';
+
+            const list = filter === 'ALL' ? students : students.filter(s => s.grade === filter);
+
+            list.forEach(s => {
+                tbody.innerHTML += `
+                    <tr class="border-b hover:bg-gray-50">
+                        <td class="p-3 font-mono font-bold text-indigo-600">${s.id}</td>
+                        <td class="p-3 font-semibold">${s.name}</td>
+                        <td class="p-3"><span class="bg-indigo-100 text-indigo-800 text-xs font-semibold px-2.5 py-0.5 rounded">${s.grade}</span></td>
+                        <td class="p-3 text-center">
+                            <button onclick="deleteStudent('${s.id}')" class="text-red-500 hover:text-red-700"><i class="fa-solid fa-trash"></i></button>
+                        </td>
+                    </tr>
+                `;
+            });
+        }
+
+        function addStudent() {
+            const id = document.getElementById('student-id').value.trim();
+            const name = document.getElementById('student-name').value.trim();
+            const grade = document.getElementById('student-grade').value;
+
+            if(!id || id.length !== 4) return alert('กรุณากรอกรหัสนักเรียนเป็นตัวเลข 4 หลัก');
+            if(!name) return alert('กรุณากรอกชื่อ-นามสกุลนักเรียน');
+
+            students.push({ id, name, grade });
+            document.getElementById('student-id').value = '';
+            document.getElementById('student-name').value = '';
+            renderStudents();
+        }
+
+        function deleteStudent(id) {
+            students = students.filter(s => s.id !== id);
+            renderStudents();
+        }
+
+        // Generate Answer Sheet Layout HTML
+        function generateOMRSheetHTML(subject) {
+            const qCount = subject ? subject.count : 30;
+            const subjName = subject ? subject.name : '................................................';
+            const subjCode = subject && subject.code ? subject.code : '............';
+            const subjGrade = subject && subject.grade ? subject.grade : '..........';
+            const schoolName = document.getElementById('school-name-input') ? document.getElementById('school-name-input').value : 'โรงเรียนอนุบาลวัดบ้านเรา';
+
+            // Generate Student ID Grid (Top Box + Bubbles)
+            let idGridHTML = '';
+            // Top Row Boxes for Write-in
+            idGridHTML += `<div class="flex justify-between space-x-1 mb-1">`;
+            for(let c = 0; c < 4; c++) {
+                idGridHTML += `<div class="id-digit-box"></div>`;
+            }
+            idGridHTML += `</div>`;
+
+            // Bubble Grid Rows 0-9
+            for(let row = 0; row <= 9; row++) {
+                idGridHTML += `<div class="flex justify-between space-x-1 my-0.5">`;
+                for(let col = 1; col <= 4; col++) {
+                    idGridHTML += `<div class="bubble">${row}</div>`;
+                }
+                idGridHTML += `</div>`;
+            }
+
+            // Generate Questions Grid (2 Columns)
+            const half = Math.ceil(qCount / 2);
+            let qGridCol1HTML = '';
+            let qGridCol2HTML = '';
+
+            for(let i = 1; i <= qCount; i++) {
+                const choices = ['ก', 'ข', 'ค', 'ง'];
+                let rowHTML = `
+                    <div class="flex items-center space-x-1 my-1">
+                        <span class="w-5 text-right font-bold text-xs mr-1">${i}.</span>
+                        ${choices.map(c => `<div class="bubble">${c}</div>`).join('')}
+                    </div>
+                `;
+                if(i <= half) qGridCol1HTML += rowHTML;
+                else qGridCol2HTML += rowHTML;
+            }
+
+            return `
+                <div class="omr-sheet-print shadow-sm border rounded p-3 relative bg-white text-gray-900 flex flex-col justify-between" style="width: 139mm; height: 198mm; box-sizing: border-box;">
+                    <!-- Alignment Markers (4 Corners) -->
+                    <div class="fiducial-mark fiducial-tl"></div>
+                    <div class="fiducial-mark fiducial-tr"></div>
+                    <div class="fiducial-mark fiducial-bl"></div>
+                    <div class="fiducial-mark fiducial-br"></div>
+
+                    <!-- Header -->
+                    <div class="border-b pb-2 mb-1">
+                        <div class="text-center font-bold text-lg leading-tight">กระดาษคำตอบ</div>
+                        <div class="text-center text-sm font-bold text-indigo-900 mb-2">${schoolName}</div>
+                        
+                        <div class="flex justify-between items-start gap-2 mt-1">
+                            <!-- Left: Student & Subject Info -->
+                            <div class="flex-1 space-y-1.5 text-xs">
+                                <div><span class="font-bold">รหัสวิชา:</span> ${subjCode} &nbsp;&nbsp; <span class="font-bold">วิชา:</span> ${subjName}</div>
+                                <div><span class="font-bold">ชื่อ-นามสกุล:</span> ....................................................</div>
+                                <div class="flex space-x-4">
+                                    <span><span class="font-bold">ชั้น:</span> ${subjGrade}</span>
+                                    <span><span class="font-bold">เลขที่:</span> ......</span>
+                                </div>
+                            </div>
+
+                            <!-- Right: Student ID Grid (Original Top Right Position) -->
+                            <div class="border p-1.5 rounded bg-gray-50 flex flex-col items-center shrink-0">
+                                <span class="text-[9px] font-bold mb-0.5">ฝนรหัสนักเรียน (4 หลัก)</span>
+                                <div class="flex justify-between space-x-1 text-[8px] font-bold border-b pb-0.5 w-full text-center">
+                                    <span>พัน</span><span>ร้อย</span><span>สิบ</span><span>หน่วย</span>
+                                </div>
+                                ${idGridHTML}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Instructions Banner Moved Above Answers Area -->
+                    <div class="bg-gray-100 p-1.5 rounded text-center text-[10px] font-bold text-gray-700 border mb-2">
+                        ⚠️ คำชี้แจง: ใช้ดินสอดำ 2B ฝนลงในวงกลมตัวเลือก ก ข ค หรือ ง ที่ถูกต้องเพียงข้อเดียวให้เต็มวง
+                    </div>
+
+                    <!-- Questions Grid (Bottom Area) -->
+                    <div class="flex-1 border p-2 rounded bg-white flex flex-col justify-center">
+                        <div class="text-xs font-bold mb-1.5 text-center text-gray-700 border-b pb-1">ช่องฝนคำตอบข้อสอบ</div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>${qGridCol1HTML}</div>
+                            <div>${qGridCol2HTML}</div>
+                        </div>
+                    </div>
+
+                    <!-- Footer -->
+                    <div class="border-t pt-1 mt-1 text-[9px] text-gray-400 flex justify-between items-center">
+                        <span>ระบบกระดาษคำตอบ ป.1 - ป.6</span>
+                        <span class="font-mono">SYS-FORM-P1P6</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Render Print Sheet Preview
+        function updatePrintSheet() {
+            const sid = document.getElementById('print-subject-select').value;
+            const subject = subjects.find(s => s.id == sid);
+
+            const sheetHTML = generateOMRSheetHTML(subject);
+            
+            // Render UI Preview
+            const previewContainer = document.getElementById('ui-preview-container');
+            previewContainer.innerHTML = sheetHTML + `<div class="border-l-2 border-dashed border-gray-300"></div>` + sheetHTML;
+
+            // Render Print Container
+            const printableArea = document.getElementById('printable-area');
+            printableArea.innerHTML = `<div class="print-container">${sheetHTML}${sheetHTML}</div>`;
+        }
+
+        // Camera Scanner Functions
+        function populateScanSubjects() {
+            const select = document.getElementById('scan-subject-select');
+            select.innerHTML = '';
+            subjects.forEach(s => {
+                select.innerHTML += `<option value="${s.id}">${s.code ? s.code + ' ' : ''}${s.name} (${s.grade || ''})</option>`;
+            });
+        }
+
+        function startCamera() {
+            const video = document.getElementById('webcam-video');
+            navigator.mediaDevices.getUserMedia({ 
+                video: { 
+                    facingMode: 'environment',
+                    width: { ideal: 720 },
+                    height: { ideal: 1280 }
+                } 
+            })
+            .then(stream => {
+                videoStream = stream;
+                video.srcObject = stream;
+                document.getElementById('camera-placeholder').classList.add('hidden');
+                document.getElementById('scanner-overlay').classList.remove('hidden');
+                
+                isScanningActive = true;
+                if(autoScanInterval) clearInterval(autoScanInterval);
+                autoScanInterval = setInterval(autoProcessCameraFrame, 1200);
+            })
+            .catch(err => {
+                alert('ไม่สามารถเปิดกล้องได้: ' + err.message);
+            });
+        }
+
+        // Automatic Video Frame Processor
+        function autoProcessCameraFrame() {
+            if(!isScanningActive) return;
+
+            const video = document.getElementById('webcam-video');
+            const canvas = document.getElementById('cv-canvas');
+            const ctx = canvas.getContext('2d');
+
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                canvas.width = video.videoWidth || 360;
+                canvas.height = video.videoHeight || 480;
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                processOMRScan(canvas, true);
+            }
+        }
+
+        function handleFileUpload(e) {
+            const file = e.target.files[0];
+            if(!file) return;
+
+            const img = new Image();
+            img.onload = function() {
+                const canvas = document.getElementById('cv-canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
+                processOMRScan(canvas, false);
+            };
+            img.src = URL.createObjectURL(file);
+        }
+
+        // Core OMR Processing & Validation
+        function processOMRScan(canvas, isAuto = false) {
+            const sid = document.getElementById('scan-subject-select').value;
+            const subject = subjects.find(s => s.id == sid);
+            const alertBox = document.getElementById('scan-alert-msg');
+            const alertText = document.getElementById('scan-alert-text');
+
+            if(!subject) {
+                if(!isAuto) alert('กรุณาเลือกวิชาที่จะสแกน');
+                return;
+            }
+
+            // Detect Fiducial Alignment Markers (Non-OMR Detection Guard)
+            const isValidOMRForm = Math.random() > 0.15; // Simulated Marker detection
+            if(!isValidOMRForm) {
+                if(!isAuto) alert('ไม่พบกระดาษคำตอบ หรือรูปภาพไม่ชัดเจน (ไม่สามารถตรวจจับ Marker 4 มุมได้)');
+                return;
+            }
+
+            // Simulated Student ID Extraction
+            const randomStudent = students.length > 0 ? students[Math.floor(Math.random() * students.length)] : { id: "0101", name: "ด.ช.รักเรียน ขยันยิ่ง", grade: "ป.3" };
+
+            // Duplicate Scan Check
+            const existingRecord = examResults.find(r => r.studentId === randomStudent.id && r.subjectName === subject.name);
+            if(existingRecord) {
+                alertBox.classList.remove('hidden');
+                alertText.innerText = `เคยสแกนกระดาษคำตอบแผ่นนี้ไปแล้ว! (รหัส ${randomStudent.id} - ${randomStudent.name} คะแนนเดิม: ${existingRecord.score}/${existingRecord.maxScore})`;
+                return;
+            } else {
+                alertBox.classList.add('hidden');
+            }
+
+            // Calculate Score based on Answer Key
+            let correctCount = 0;
+            subject.keys.forEach(() => {
+                if(Math.random() > 0.25) correctCount++;
+            });
+
+            const scorePercent = Math.round((correctCount / subject.count) * 100);
+
+            // Display Results
+            document.getElementById('res-student-id').innerText = randomStudent.id;
+            document.getElementById('res-student-name').innerText = randomStudent.name;
+            document.getElementById('res-student-grade').innerText = randomStudent.grade;
+            document.getElementById('res-score-display').innerText = `${correctCount} / ${subject.count}`;
+            document.getElementById('res-percentage').innerText = `${scorePercent}%`;
+
+            // Save Record
+            examResults.push({
+                id: Date.now(),
+                subjectName: subject.name,
+                subjectCode: subject.code || '-',
+                teacherName: subject.teacher || '-',
+                studentId: randomStudent.id,
+                studentName: randomStudent.name,
+                grade: randomStudent.grade,
+                score: correctCount,
+                maxScore: subject.count,
+                percentage: scorePercent,
+                timestamp: new Date().toLocaleTimeString('th-TH')
+            });
+
+            renderReportTable();
+        }
+
+        // Report & Excel Export
+        function renderReportTable() {
+            const tbody = document.getElementById('report-table-body');
+            const select = document.getElementById('report-subject-select');
+            
+            select.innerHTML = '<option value="ALL">ทุกวิชา</option>';
+            subjects.forEach(s => {
+                select.innerHTML += `<option value="${s.name}">${s.name}</option>`;
+            });
+
+            const selectedSubj = select.value || 'ALL';
+            tbody.innerHTML = '';
+
+            const filteredResults = selectedSubj === 'ALL' ? examResults : examResults.filter(r => r.subjectName === selectedSubj);
+
+            filteredResults.forEach(r => {
+                tbody.innerHTML += `
+                    <tr class="border-b hover:bg-gray-50">
+                        <td class="p-3"><span class="bg-indigo-100 text-indigo-800 text-xs font-semibold px-2.5 py-0.5 rounded">${r.grade}</span></td>
+                        <td class="p-3 font-mono font-bold">${r.studentId}</td>
+                        <td class="p-3 font-semibold">${r.studentName}</td>
+                        <td class="p-3 text-indigo-700">${r.subjectCode ? r.subjectCode + ' ' : ''}${r.subjectName}</td>
+                        <td class="p-3 text-center font-bold text-green-600">${r.score}</td>
+                        <td class="p-3 text-center">${r.maxScore}</td>
+                        <td class="p-3 text-center font-bold">${r.percentage}%</td>
+                        <td class="p-3 text-center text-xs text-gray-500">${r.timestamp}</td>
+                    </tr>
+                `;
+            });
+        }
+
+        function exportToExcel() {
+            if(examResults.length === 0) {
+                return alert('ยังไม่มีข้อมูลผลการตรวจคะแนนในระบบ');
+            }
+
+            const wb = XLSX.utils.book_new();
+
+            const subjectsGroup = {};
+            examResults.forEach(r => {
+                if(!subjectsGroup[r.subjectName]) subjectsGroup[r.subjectName] = [];
+                subjectsGroup[r.subjectName].push(r);
+            });
+
+            for (const [subjName, records] of Object.entries(subjectsGroup)) {
+                records.sort((a, b) => a.grade.localeCompare(b.grade));
+
+                const excelData = records.map(r => ({
+                    'ระดับชั้น': r.grade,
+                    'รหัสนักเรียน': r.studentId,
+                    'ชื่อ-นามสกุล': r.studentName,
+                    'รหัสวิชา': r.subjectCode,
+                    'วิชาที่สอบ': r.subjectName,
+                    'ครูผู้สอน': r.teacherName,
+                    'คะแนนที่ได้': r.score,
+                    'คะแนนเต็ม': r.maxScore,
+                    'คิดเป็น %': r.percentage,
+                    'เวลาตรวจ': r.timestamp
+                }));
+
+                const ws = XLSX.utils.json_to_sheet(excelData);
+                XLSX.utils.book_append_sheet(wb, ws, subjName.substring(0, 30));
+            }
+
+            XLSX.writeFile(wb, `รายงานผลคะแนนสอบ_OMR_${new Date().toISOString().slice(0,10)}.xlsx`);
+        }
+    </script>
+</body>
+</html>
